@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 #from matplotlib import animation
 from scipy.optimize import minimize, Bounds
 from scipy.linalg import orth
-from dppy.finite_dpps import FiniteDPP #Requires the DPPy package by Guillaume Gautier
+from dppy.finite_dpps import FiniteDPP #Requires the DPPy package.
 
 marker = 'o'
 
@@ -41,7 +41,7 @@ def PHImono_show(dim, deg):
         raise ValueError("Can't print subscripts higher than 9 because I haven't coded it yet.")
     Q = PHImono_list(dim, deg)
     print('1')
-    if dim<= 5:
+    if dim <= 5:
         dico = ('x', 'y', 'z', 't', 'u')
     else:
         dico = ('x\u2081', 'x\u2082', 'x\u2083', 'x\u2084', 'x\u2085', 'x\u2086', 'x\u2087',\
@@ -53,20 +53,20 @@ def PHImono_show(dim, deg):
         for j in range(pol.shape[0]):
             if pol[j] == 1:
                 s += dico[j]
-            elif pol[j]>1:
+            elif pol[j] > 1:
                 s += dico[j]+power[int(pol[j])-2]
         print(s)
 
 def multinom_to_list(L):
     U = []
     for i in range(len(L)):
-        if L[i]>0:
+        if L[i] > 0:
             U += [i for _ in range(int(L[i]))]
     return U
 
 def DiscreteVS(PHI, P, nbpoint=None, crit="D"):
 
-    Pt = np.unique([tuple(row) for row in P], axis = 0)
+    Pt = np.unique([tuple(row) for row in P], axis=0)
 
     Q = PHI(Pt)
     V = cv.matrix(Q.T)
@@ -81,21 +81,24 @@ def DiscreteVS(PHI, P, nbpoint=None, crit="D"):
 
     if crit == "D":
         A = cv.matrix(1.0, (1, n))
-        def F(x = None, z = None):
+        def F(x=None, z=None):
             if x is None: return 0, cv.matrix(1.0, (n, 1))
             X = V * cv.spdiag(x) * V.T
             L = +X
-            try: cv.lapack.potrf(L)
-            except ArithmeticError: return None
+            try:
+                cv.lapack.potrf(L)
+            except ArithmeticError:
+                return None
             f = - 2.0 * sum([math.log(L[i, i]) for i in range(d)])
             W = +V
             cv.blas.trsm(L, W)
             gradf = cv.matrix(-1.0, (1, d)) * W**2
-            if z is None: return f, gradf
+            if z is None:
+                return f, gradf
             H = cv.matrix(0.0, (n, n))
-            cv.blas.syrk(W, H, trans = 'T')
+            cv.blas.syrk(W, H, trans='T')
             return f, gradf, z[0] * H**2
-        xd = cv.solvers.cp(F, G, h, A = A, b = b)['x']
+        xd = cv.solvers.cp(F, G, h, A=A, b=b)['x']
         U = np.array(xd)[:, 0]
     elif crit == "A":
         novars = n + int(d*(d+1)/2)
@@ -159,7 +162,7 @@ def Finite_ExM(OD, X, crit="D", progress=False):
         else:
             k = 0
         if progress:
-            print("\rNon-opt streak: "+str(k)+"/"+str(OD.nbpoint)+" | "+crit+"-Optimality of current best: "+str(new_val), end = "")
+            print("\rNon-opt streak: "+str(k)+"/"+str(OD.nbpoint)+" | "+crit+"-Optimality of current best: "+str(new_val), end="")
     return P
 
 def RegP(xlim, ylim, npoint):
@@ -172,6 +175,7 @@ def RegP(xlim, ylim, npoint):
 
 class OptDesign:
     def __init__(self, PHI, lower_point, upper_point, nbpoint=None, cara=None, Urand=None, plot_fun=None, opt_1P_fun=None):
+        """Optimal Design Class"""
 
         l = np.array(lower_point)
         u = np.array(upper_point)
@@ -207,7 +211,7 @@ class OptDesign:
                 one = np.ones((n, dim))
                 P = np.array(np.multiply(one, l)+np.multiply(np.random.rand(n, dim), np.multiply(one, u-l)))
                 P = P[cara(P), :]
-                while P.shape[0]<n:
+                while P.shape[0] < n:
                     P2 = np.array(np.multiply(one, l)+np.multiply(np.random.rand(n, dim), np.multiply(one, u-l)))
                     P2 = P2[cara(P2), :]
                     P = np.vstack((P, P2))
@@ -257,7 +261,7 @@ class OptDesign:
         if self.opt_1P_fun is not None:
             return self.opt_1P_fun(self.opt, P, x0, crit)
         bounds = Bounds(self.lower_point, self.upper_point)
-        res = minimize(lambda x:self.opt(np.vstack((P, x)), crit=crit), x0, method='L-BFGS-B', bounds=bounds)
+        res = minimize(lambda x: self.opt(np.vstack((P, x)), crit=crit), x0, method='L-BFGS-B', bounds=bounds)
         return res.x
 
     def RandomTesting(self, n=1, crit="D"):
@@ -265,13 +269,16 @@ class OptDesign:
             print(self.opt(self.Urand(self.nbpoint), crit=crit))
 
     def plot(self, Ptup, s=100, modify_plot=False):
+        """Plot designs in dimension 2."""
+
+        if self.dim != 2:
+            raise ValueError("Plotting only available in dimension 2.")
+
         if type(Ptup) != tuple:
             l = self.lower_point
             u = self.upper_point
-            fig = plt.figure(figsize = (8, 8*(u[1]-l[1])/(u[0]-l[0])))
+            fig = plt.figure(figsize=(8, 8*(u[1]-l[1])/(u[0]-l[0])))
             ax = fig.add_subplot(1, 1, 1)
-            if self.dim != 2:
-                raise ValueError("Plotting only available in dimension 2.")
             ax = self.plot_fun(ax)
             Pt, Nb = np.unique([tuple(row) for row in Ptup], axis=0, return_counts=True)
             ax.scatter(Pt[:, 0], Pt[:, 1], marker=marker, c='r', s=s*Nb)
@@ -279,7 +286,7 @@ class OptDesign:
             n = len(Ptup)
             l = self.lower_point
             u = self.upper_point
-            fig = plt.figure(figsize = (8*n, 8*(u[1]-l[1])/(u[0]-l[0])))
+            fig = plt.figure(figsize=(8*n, 8*(u[1]-l[1])/(u[0]-l[0])))
             for i in range(n):
                 ax = fig.add_subplot(1, n, i+1)
                 ax = self.plot_fun(ax)
@@ -319,14 +326,14 @@ class DOGS:
             P = self.ini
 
         for N in range(nbiter):
-            oldval = self.OD.opt(P, crit = self.crit)
+            oldval = self.OD.opt(P, crit=self.crit)
             Pupd = self.OD.Urand(self.nbupd)
             try:
-                Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint = self.OD.nbpoint, crit = self.crit)
+                Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint=self.OD.nbpoint, crit=self.crit)
             except:
                 Pfin = P
             newval = self.OD.opt(Pfin, crit=self.crit)
-            if newval < oldval :
+            if newval < oldval:
                 P = np.copy(Pfin)
             if progress:
                 print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end=" ")
@@ -338,12 +345,12 @@ class DOGS:
         P = self.OD.Urand(self.OD.nbpoint)
 
         for N in range(nbiter):
-            oldval = self.OD.opt(P, crit = self.crit)
+            oldval = self.OD.opt(P, crit=self.crit)
             Pupd = self.OD.Urand(self.nbupd)
-            X = np.unique([np.vstack((P, Pupd, self.CP)) for row in P], axis = 0)[0]
-            Pfin = Finite_ExM(self.OD, X, progress = Fexm_progress, crit = self.crit)
-            newval = self.OD.opt(Pfin, crit = self.crit)
-            if newval<oldval:
+            X = np.unique([np.vstack((P, Pupd, self.CP)) for row in P], axis=0)[0]
+            Pfin = Finite_ExM(self.OD, X, progress=Fexm_progress, crit=self.crit)
+            newval = self.OD.opt(Pfin, crit=self.crit)
+            if newval < oldval:
                 P = np.copy(Pfin)
             if progress:
                 print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end=" ")
@@ -375,7 +382,7 @@ class DOGS:
                 except:
                     Pfin = P
                 newval = self.OD.opt(Pfin, crit=self.crit)
-                if newval<oldval :
+                if newval < oldval:
                     P = np.copy(Pfin)
                 L.append(self.OD.opt(P, crit=self.crit))
 
@@ -447,36 +454,36 @@ class DOGS:
 #############################Classe LSA##############################
 
 class LSA:
-    def __init__(self, OD, sd, ini = None, crit = "D"):
+    def __init__(self, OD, sd, ini=None, crit="D"):
 
         self.OD = OD
         self.sd = sd
         self.ini = ini
         self.crit = crit
 
-    def simulate(self, nbiter, progress = False):
+    def simulate(self, nbiter, progress=False):
 
         if self.ini is None:
             P = self.OD.Urand(self.OD.nbpoint)
         else: P = self.ini
 
         for N in range(nbiter):
-            oldval = self.OD.opt(P, crit = self.crit)
-            Pupd = P+np.random.normal(loc = 0, scale = self.sd, size = (self.OD.nbpoint, self.OD.dim))
+            oldval = self.OD.opt(P, crit=self.crit)
+            Pupd = P+np.random.normal(loc=0, scale=self.sd, size=(self.OD.nbpoint, self.OD.dim))
             CARA = self.OD.cara(Pupd)
             for i in range(self.OD.nbpoint):
                 if not CARA[i]:
                     Pupd[i, :] = np.copy(P[i, :])
-            newval = self.OD.opt(Pupd, crit = self.crit)
-            if newval<oldval :
+            newval = self.OD.opt(Pupd, crit=self.crit)
+            if newval < oldval:
                 P = np.copy(Pupd)
             if progress:
-                print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end  = " ")
+                print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end=" ")
         if progress:
             print('Done')
         return P
 
-    def testing(self, nbiter, nbtest = 1, progress = False):
+    def testing(self, nbiter, nbtest=1, progress=False):
 
         All_result = np.zeros(nbiter+1)
 
@@ -487,22 +494,22 @@ class LSA:
             else:
                 P = self.ini
 
-            L = [self.OD.opt(P, crit = self.crit)]
+            L = [self.OD.opt(P, crit=self.crit)]
 
             for _ in range(nbiter):
-                oldval = self.OD.opt(P, crit = self.crit)
-                Pupd = P+np.random.normal(loc = 0, scale = self.sd, size = (self.OD.nbpoint, self.OD.dim))
+                oldval = self.OD.opt(P, crit=self.crit)
+                Pupd = P+np.random.normal(loc=0, scale=self.sd, size=(self.OD.nbpoint, self.OD.dim))
                 CARA = self.OD.cara(Pupd)
                 for i in range(self.OD.nbpoint):
                     if not CARA[i]:
                         Pupd[i, :] = np.copy(P[i, :])
-                newval = self.OD.opt(Pupd, crit = self.crit)
-                if newval<oldval :
+                newval = self.OD.opt(Pupd, crit=self.crit)
+                if newval < oldval:
                     P = np.copy(Pupd)
-                L = L+[self.OD.opt(P, crit = self.crit)]
+                L = L+[self.OD.opt(P, crit=self.crit)]
 
             All_result = np.vstack((All_result, np.asarray(L)))
-            if progress: print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end  = " ")
+            if progress: print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end=" ")
         if progress: print('Done')
         return All_result[1:, :]
 
@@ -567,7 +574,7 @@ class LSA:
 #############################Classe ExM##############################
 
 class ExM:
-    def __init__(self, OD, ini = None, crit = "D"):
+    def __init__(self, OD, ini=None, crit="D"):
 
         if crit not in ["D", "A"]:
             raise ValueError("Wrong optimality criterion. It should be A or D.")
@@ -576,7 +583,7 @@ class ExM:
         self.ini = ini
         self.crit = crit
 
-    def simulate(self, nbiter, progress = False):
+    def simulate(self, nbiter, progress=False):
 
         if self.ini is None:
             P = self.OD.Urand(self.OD.nbpoint)
@@ -587,11 +594,11 @@ class ExM:
             Q = np.delete(P, 0, 0)
             x = self.OD.P_opt(Q, x0, self.crit)
             P = np.vstack((Q, x))
-            if progress: print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end  = " ")
+            if progress: print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end=" ")
         if progress: print('Done')
         return P
 
-    def testing(self, nbiter, nbtest = 1, progress = False):
+    def testing(self, nbiter, nbtest=1, progress=False):
 
         All_result = np.zeros(nbiter+1)
 
@@ -602,18 +609,18 @@ class ExM:
             else:
                 P = self.ini
 
-            L = [self.OD.opt(P, crit = self.crit)]
+            L = [self.OD.opt(P, crit=self.crit)]
 
             for _ in range(nbiter):
                 x0 = P[0, :]
                 Q = np.delete(P, 0, 0)
                 x = self.OD.P_opt(Q, x0, self.crit)
                 P = np.vstack((Q, x))
-                L = L+[self.OD.opt(P, crit = self.crit)]
+                L = L+[self.OD.opt(P, crit=self.crit)]
 
             All_result = np.vstack((All_result, np.asarray(L)))
             if progress:
-                print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end  = " ")
+                print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end=" ")
         if progress:
             print('Done')
         return All_result[1:, :]
@@ -688,7 +695,7 @@ class Discrete_ExM:
 
     def show(self):
 
-        if self.OD.dim!= 2:
+        if self.OD.dim != 2:
             raise ValueError("Plotting only available in dimension 2.")
 
         P = RegP(self.OD.lower_point, self.OD.upper_point, self.size)
@@ -704,19 +711,19 @@ class Discrete_ExM:
             P = np.vstack((P, self.CP))
         return sum(self.OD.cara(P))
 
-    def simulate(self, progress = False):
+    def simulate(self, progress=False):
 
         P = RegP(self.OD.lower_point, self.OD.upper_point, self.size)
         if self.CP is not None:
             P = np.vstack((P, self.CP))
         P = P[self.OD.cara(P), :]
 
-        return Finite_ExM(self.OD, P, progress = progress, crit = self.crit)
+        return Finite_ExM(self.OD, P, progress=progress, crit=self.crit)
 
 #############################Making old stuff still work##############################
 
 def ARIFAA(OD, nbupd=None, ini=None, crit="D", CP=None):
-    return DOGS(OD, nbupd = nbupd, ini = ini, crit = crit, CP = CP)
+    return DOGS(OD, nbupd=nbupd, ini=ini, crit=crit, CP=CP)
 
-def DisSpace(OD, size = 0, crit = "D", CP = None):
-    return Discrete_ExM(OD, size = size, crit = crit, CP = CP)
+def DisSpace(OD, size=0, crit="D", CP=None):
+    return Discrete_ExM(OD, size=size, crit=crit, CP=CP)
