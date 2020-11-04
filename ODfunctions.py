@@ -175,7 +175,26 @@ def RegP(xlim, ylim, npoint):
 
 class OptDesign:
     def __init__(self, PHI, lower_point, upper_point, nbpoint=None, cara=None, Urand=None, plot_fun=None, opt_1P_fun=None):
-        """Optimal Design Class"""
+        """Definition of the optimal design object.
+
+        Parameters:
+        PHI (function): Function taking an n times d numpy array corresponding to n points x_1,...,x_n in dimension d and returning the n times p
+        numpy array such that the (i,j) coefficient is Phi_j(x_i).
+        lower_point (array): Array of length d such that each point x in the design space is such that x>lower_point coordinatewise.
+        upper_point (array): Array of length d such that each point x in the design space is such that x<upper_point coordinatewise.
+        nbpoint (int): Number of point in the design. By default, it is equal to the number of regressors.
+        cara (function): Function taking an n times d numpy array corresponding to n points x_1,...,x_n in dimension d and returning a boolean
+        array of length p such that the i-th coefficient. By default, it is equal to the characteristic function on the d-dimensional rectangle
+        delimited by lower_point and upper_point.
+        Urand (function): Function taking an integer n and returning an n times d numpy array correponding to n points generated i.i.d. uniformly
+        on the design space. By default it is a rejection method using the cara function.
+        plot_fun (function): To be removed
+        opt_1P_fun (function): To be removed
+
+        Returns:
+        OptDesign object representing an optimal design problem.
+
+        """
 
         l = np.array(lower_point)
         u = np.array(upper_point)
@@ -302,6 +321,20 @@ class OptDesign:
 
 class DOGS:
     def __init__(self, OD, nbupd=None, ini=None, crit="D", CP=None):
+        """Definition of the DOGS object.
+
+        Parameters:
+        OD (OptDesign): OptDesign object representing the design space and number of point of the designs considered.
+        nbpupd (int): Number of points generated uniformly i.i.d. in each iteration of DOGS. By default, it is equal to the number of regressors.
+        ini (array): k times d matrix corresponding to the k points of the initial design of DOGS. If not specified, the initial design will be
+        chosen uniformly i.i.d. for every simulation of DOGS.
+        crit (string): String either "A" or "D" corresponding to the optimality criterion.
+        CP (array): l times d matrix corresponding to l candidate points of DOGS. If not specified, no canidate points will be considered.
+
+        Returns:
+        DOGS object representing the DOGS algorithm.
+
+        """
 
         if crit not in ["D", "A"]:
             raise ValueError("Wrong optimality criterion. It should be A or D.")
@@ -455,6 +488,22 @@ class DOGS:
 
 class LSA:
     def __init__(self, OD, sd, ini=None, crit="D"):
+        """Definition of the LSA object.
+
+        Parameters:
+        OD (OptDesign): OptDesign object representing the design space and number of point of the designs considered.
+        sd (double): Double corresponding to the standard deviation of the gaussian random walk used by LSA.
+        ini (array): k times d matrix corresponding to the k points of the initial design of DOGS. If not specified, the initial design will be
+        chosen uniformly i.i.d. for every simulation of LSA.
+        crit (string): String either "A" or "D" corresponding to the optimality criterion.
+
+        Returns:
+        LSA object representing the LSA algorithm.
+
+        """
+
+        if crit not in ["D", "A"]:
+            raise ValueError("Wrong optimality criterion. It should be A or D.")
 
         self.OD = OD
         self.sd = sd
@@ -575,6 +624,18 @@ class LSA:
 
 class ExM:
     def __init__(self, OD, ini=None, crit="D"):
+        """Definition of the ExM object.
+
+        Parameters:
+        OD (OptDesign): OptDesign object representing the design space and number of point of the designs considered.
+        ini (array): k times d matrix corresponding to the k points of the initial design of DOGS. If not specified, the initial design will be
+        chosen uniformly i.i.d. for every simulation of ExM.
+        crit (string): String either "A" or "D" corresponding to the optimality criterion.
+
+        Returns:
+        ExM object representing the ExM algorithm.
+
+        """
 
         if crit not in ["D", "A"]:
             raise ValueError("Wrong optimality criterion. It should be A or D.")
@@ -681,6 +742,18 @@ class ExM:
 #############################Classe DisSpace##############################
 class Discrete_ExM:
     def __init__(self, OD, size=0, crit="D", CP=None):
+        """Definition of the Discrete_ExM object.
+
+        Parameters:
+        OD (OptDesign): OptDesign object representing the design space and number of point of the designs considered.
+        size (int): Integer corresponding to the number of points (in each direction) of the grid approximation of the design space.
+        crit (string): String either "A" or "D" corresponding to the optimality criterion.
+        CP (array): l times d matrix corresponding to l candidate points of DOGS. If not specified, no canidate points will be considered.
+
+        Returns:
+        DOGS object representing the Discrete_ExM algorithm.
+
+        """
 
         if crit not in ("A", "D"):
             raise ValueError("Wrong optimality criterion. It should be A or D.")
