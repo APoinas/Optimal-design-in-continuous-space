@@ -174,7 +174,7 @@ def RegP(xlim, ylim, npoint):
     return np.asarray(Points)
 
 class OptDesign:
-    def __init__(self, PHI, lower_point, upper_point, nbpoint=None, cara=None, Urand=None, plot_fun=None, opt_1P_fun=None):
+    def __init__(self, PHI, lower_point, upper_point, nbpoint=None, cara=None, Urand=None, plot_fun=None, opt_1P_fun=None, A_prior=None):
         """Definition of the optimal design object.
 
         Parameters:
@@ -257,14 +257,16 @@ class OptDesign:
 
         self.opt_1P_fun = opt_1P_fun
 
+        self.A_prior = np.zeros((self.nbreg,self.nbreg)) if A_prior is None else A_prior
+
     def opt(self, x, crit="D"):
         P = x.reshape(self.nbpoint, self.dim)
         Q = self.PHI(P)
         if not all(self.cara(P)):
             return 10000000000
         if crit == "D":
-            return -np.linalg.slogdet((Q.T).dot(Q))[1]
-        M = (Q.T).dot(Q)
+            return -np.linalg.slogdet((Q.T).dot(Q)+self.A_prior)[1]
+        M = (Q.T).dot(Q)+self.A_prior
         d = np.linalg.det(M)
         if d == 0:
             return 10000000000
@@ -426,64 +428,6 @@ class DOGS:
             print('Done')
         return All_result[1:, :]
 
-    # def animate(self, nbiter, nbframe_ini = 10, fps = 10, show_last_frame = False):
-
-    #     if self.OD.dim!= 2:
-    #         raise ValueError('Animation only available in dimension 2')
-
-    #     l = self.OD.lower_point
-    #     u = self.OD.upper_point
-    #     fig = plt.figure(figsize = (10, 10*(u[1]-l[1])/(u[0]-l[0])))
-    #     ax = fig.add_subplot(1, 1, 1)
-    #     ax = self.OD.plot_fun(ax)
-    #     line2 = ax.scatter([], [], marker = marker, s = 100, alpha = 0.2, color = "grey")
-    #     line = ax.scatter([], [], marker = marker, s = 100, color = 'r')
-    #     leg1 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/100, "", fontsize = 20)
-    #     leg2 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/10, "", fontsize = 20)
-
-    #     def init():
-    #         global P
-    #         if self.ini is None:
-    #             P = self.OD.Urand(self.OD.nbpoint)
-    #         else:
-    #             P = self.ini
-    #         cv.solvers.options['show_progress'] = False
-    #         line2.set_offsets(np.array([[], []]).T)
-    #         line.set_offsets(np.array([[], []]).T)
-    #         leg1.set_text("")
-    #         leg2.set_text("")
-    #         return line,
-
-    #     def anim_fun(Niter):
-    #         global P
-    #         Nframe = np.copy(Niter)
-    #         if Nframe<nbframe_ini:
-    #             line.set_offsets(P)
-    #             leg1.set_text("Iteration 0")
-    #             leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
-    #             return line2, line,
-
-    #         oldval = self.OD.opt(P, crit = self.crit)
-    #         Pupd = self.OD.Urand(self.nbupd)
-    #         try:
-    #             Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint = self.OD.nbpoint, crit = self.crit)
-    #         except:
-    #             Pfin = P
-    #         newval = self.OD.opt(Pfin, crit = self.crit)
-    #         if newval<oldval :
-    #             P = np.copy(Pupd)
-    #         Pt, Nb = np.unique([tuple(row) for row in P], axis = 0, return_counts = True)
-    #         line.set_offsets(Pt)
-    #         line.set_sizes(100*Nb)
-    #         line2.set_offsets(Pupd)
-    #         leg1.set_text("Iteration "+str(Nframe-nbframe_ini+1))
-    #         leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
-    #         return line2, line,
-
-    #     anim = animation.FuncAnimation(fig, anim_fun, init_func = init, frames = nbiter+nbframe_ini, blit = True)
-    #     anim.save('ARIFAA_animation.mp4', fps = fps)
-    #     if not show_last_frame: plt.close()
-
 #############################Classe LSA##############################
 
 class LSA:
@@ -562,64 +506,6 @@ class LSA:
         if progress: print('Done')
         return All_result[1:, :]
 
-    # def animate(self, nbiter, nbframe_ini = 20, fps = 10, show_last_frame = False):
-
-    #     if self.OD.dim!= 2:
-    #         raise ValueError('Animation only available in dimension 2')
-
-    #     l = self.OD.lower_point
-    #     u = self.OD.upper_point
-    #     fig = plt.figure(figsize = (10, 10*(u[1]-l[1])/(u[0]-l[0])))
-    #     ax = fig.add_subplot(1, 1, 1)
-    #     ax = self.OD.plot_fun(ax)
-    #     line2 = ax.scatter([], [], marker = marker, s = 100, alpha = 0.2, color = "grey")
-    #     line = ax.scatter([], [], marker = marker, s = 100, color = 'r')
-    #     leg1 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/50, "", fontsize = 20)
-    #     leg2 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/10, "", fontsize = 20)
-
-    #     def init():
-    #         global P
-    #         if self.ini is None:
-    #             P = self.OD.Urand(self.OD.nbpoint)
-    #         else:
-    #             P = self.ini
-    #         line2.set_offsets(np.array([[], []]).T)
-    #         line.set_offsets(np.array([[], []]).T)
-    #         leg1.set_text("")
-    #         leg2.set_text("")
-    #         return line,
-
-    #     def anim_fun(Niter):
-    #         global P
-    #         Nframe = np.copy(Niter)
-    #         if Nframe<nbframe_ini:
-    #             line.set_offsets(P)
-    #             line2.set_offsets(np.array([[], []]).T)
-    #             leg1.set_text("Iteration 0")
-    #             leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
-    #             return line2, line,
-
-    #         oldval = self.OD.opt(P, crit = self.crit)
-    #         Pupd = P+np.random.normal(loc = 0, scale = self.sd, size = (self.OD.nbpoint, self.OD.dim))
-    #         CARA = self.OD.cara(Pupd)
-    #         for i in range(self.OD.nbpoint):
-    #             if not CARA[i]:
-    #                 Pupd[i, :] = np.copy(P[i, :])
-    #         newval = self.OD.opt(Pupd, crit = self.crit)
-    #         if newval<oldval :
-    #             P = np.copy(Pupd)
-    #         Pt, Nb = np.unique([tuple(row) for row in P], axis = 0, return_counts = True)
-    #         line.set_offsets(Pt)
-    #         line.set_sizes(100*Nb)
-    #         line2.set_offsets(Pupd)
-    #         leg1.set_text("Iteration "+str(Nframe-nbframe_ini+1))
-    #         leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
-    #         return line2, line,
-
-    #     anim = animation.FuncAnimation(fig, anim_fun, init_func = init, frames = nbiter+nbframe_ini, blit = True)
-    #     anim.save('LSA_animation.mp4', fps = fps)
-    #     if not show_last_frame: plt.close()
-
 #############################Classe ExM##############################
 
 class ExM:
@@ -685,59 +571,6 @@ class ExM:
         if progress:
             print('Done')
         return All_result[1:, :]
-
-    # def animate(self, nbiter, nbframe_ini = 20, fps = 10, show_last_frame = False):
-
-    #     if self.OD.dim!= 2:
-    #         raise ValueError('Animation only available in dimension 2')
-
-    #     l = self.OD.lower_point
-    #     u = self.OD.upper_point
-    #     fig = plt.figure(figsize = (10, 10*(u[1]-l[1])/(u[0]-l[0])))
-    #     ax = fig.add_subplot(1, 1, 1)
-    #     ax = self.OD.plot_fun(ax)
-    #     line2 = ax.scatter([], [], marker = marker, s = 100, alpha = 0.2, color = "grey")
-    #     line = ax.scatter([], [], marker = marker, s = 100, color = 'r')
-    #     leg1 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/100, "", fontsize = 20)
-    #     leg2 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/10, "", fontsize = 20)
-
-    #     def init():
-    #         global P
-    #         if self.ini is None:
-    #             P = self.OD.Urand(self.OD.nbpoint)
-    #         else:
-    #             P = self.ini
-    #         line2.set_offsets(np.array([[], []]).T)
-    #         line.set_offsets(np.array([[], []]).T)
-    #         leg1.set_text("")
-    #         leg2.set_text("")
-    #         return line,
-
-    #     def anim_fun(Niter):
-    #         global P
-    #         Nframe = np.copy(Niter)
-    #         if Nframe<nbframe_ini:
-    #             line.set_offsets(P)
-    #             line2.set_offsets(np.array([[], []]).T)
-    #             leg1.set_text("Iteration 0")
-    #             leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
-    #             return line2, line,
-
-    #         x0 = P[0, :]
-    #         Q = np.delete(P, 0, 0)
-    #         x = self.OD.P_opt(Q, x0, self.crit)
-    #         P = np.vstack((Q, x))
-    #         Pt, Nb = np.unique([tuple(row) for row in P], axis = 0, return_counts = True)
-    #         line.set_offsets(Pt)
-    #         line.set_sizes(100*Nb)
-    #         line2.set_offsets(np.array([[], []]).T)
-    #         leg1.set_text("Iteration "+str(Nframe-nbframe_ini+1))
-    #         leg2.set_text("log(H_D(X)) = "+ "%.3f" % self.OD.opt(P, crit=self.crit))
-    #         return line2, line,
-
-    #     anim = animation.FuncAnimation(fig, anim_fun, init_func=init, frames=nbiter+nbframe_ini, blit=True)
-    #     anim.save('ExM_animation.mp4', fps=fps)
-    #     if not show_last_frame: plt.close()
 
 #############################Classe DisSpace##############################
 class Discrete_ExM:
