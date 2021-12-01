@@ -4,8 +4,9 @@ import cvxopt as cv
 import matplotlib.pyplot as plt
 #from matplotlib import animation
 from scipy.optimize import minimize, Bounds
-from scipy.linalg import orth
+from scipy.linalg import orth, sqrtm
 from dppy.finite_dpps import FiniteDPP #Requires the DPPy package.
+from time import time
 
 marker = 'o'
 
@@ -64,7 +65,85 @@ def multinom_to_list(L):
             U += [i for _ in range(int(L[i]))]
     return U
 
-def DiscreteVS(PHI, P, nbpoint=None, crit="D"):
+def efficient_rounding(w, k):
+    w[w<0.01/k]=0
+    l = np.sum(w!=0)
+    rounded_design = np.ceil(w*(k-l/2))
+    while np.sum(rounded_design)!=k:
+        bool_list = w!=0
+        index_list = np.where(bool_list)[0]
+        if np.sum(rounded_design)<k:
+            ratio = rounded_design[bool_list]/w[bool_list]
+            index = np.argmin(ratio)
+            rounded_design[index_list[index]] += 1
+        else:
+            ratio = (rounded_design[bool_list]-1)/w[bool_list]
+            index = np.argmax(ratio)
+            rounded_design[index_list[index]] -= 1
+    return rounded_design.astype(int)
+
+def Discrete_PVS(PHI, P, nu, k, inv_prior=None):
+
+    Q = PHI(P)
+    d = Q.shape[1]
+
+    if inv_prior is None:
+        inv_prior = np.zeros((d,d))
+
+    if np.sum(inv_prior**2)==0:
+        OrthoQ = orth(np.diag(np.sqrt(nu)).dot(Q))
+        Ker = OrthoQ.dot(OrthoQ.T)
+        DPP = FiniteDPP(kernel_type='correlation', projection=True, K=Ker)
+        T = DPP.sample_exact()
+        if k > d:
+            T += multinom_to_list(np.random.multinomial(k-d, nu))
+        return P[T,:]
+    else:
+        nu[nu<10**(-5)]=0 #Not necessary but simplifies stuff.
+        nu *= k/np.sum(nu) #We force nu(Omega)=k, which is always assumed when using DOGS anyway, to avoid computation issues.
+
+        G = (Q.T).dot(np.diag(nu).dot(Q))
+        K = Q.dot(np.linalg.inv(G + inv_prior).dot(Q.T))
+        K = np.diag(np.sqrt(nu)).dot(K.dot(np.diag(np.sqrt(nu))))
+        eig_val, eig_vec = np.linalg.eigh(K)
+        eig_val = np.minimum(np.abs(eig_val), 1) #Avoid eigenvalues slightly below 0 or greater than 1 due to numerical instabilities.
+        N = 0
+        I = np.zeros(d)
+        while N + np.sum(I) != k:
+            I = np.random.binomial(1, eig_val)
+            N = np.random.poisson(k) #Only correct because we forced nu(Omega)=k.
+        Ker = eig_vec.dot(np.diag(I).dot(eig_vec.T))
+        DPP = FiniteDPP(kernel_type='correlation', projection=True, K=np.array(Ker))
+        T = DPP.sample_exact()
+        if N > 0:
+            T += multinom_to_list(np.random.multinomial(N, nu/np.sum(nu)))
+        return P[T,:]
+
+# elif np.sum((inv_prior - inv_prior[0,0]*np.eye(d))**2)==0:
+#     nu[nu<10**(-5)]=0 #Not necessary but simplifies stuff.
+#     nu *= k/np.sum(nu) #We force nu(Omega)=k, which is always assumed when using DOGS anyway, to avoid computation issues.
+#     C = inv_prior[0,0]
+
+#     G = (Q.T).dot(np.diag(nu).dot(Q))
+#     eig_val_G, eig_vec = np.linalg.eigh(G)
+#     eig_val = 1 - C/(C + np.abs(eig_val_G))
+#     ortho_fun = Q.dot(eig_vec.dot(np.diag(1/np.sqrt(np.abs(eig_val_G)))))
+#     N = 0
+#     I = np.zeros(d)
+#     while N + np.sum(I) != k:
+#         I = np.random.binomial(1, eig_val)
+#         N = np.random.poisson(k) #Only correct because we imposed nu(Omega)=k.
+#     Ker = ortho_fun.dot(np.diag(I).dot(ortho_fun.T))
+#     Ker = np.diag(np.sqrt(nu)).dot(Ker.dot(np.diag(np.sqrt(nu))))
+#     DPP = FiniteDPP(kernel_type='correlation', projection=True, K=np.asarray(Ker))
+#     T = DPP.sample_exact()
+#     if N > 0:
+#         T += multinom_to_list(np.random.multinomial(N, nu/np.sum(nu)))
+#     return P[T,:]
+# else:
+#     raise ValueError("Not programmed for prior that aren't multiple of identity yet.")
+
+def DiscreteConvexOpt(PHI, P, nbpoint=None, crit="D", inv_prior=None):
 
     Pt = np.unique([tuple(row) for row in P], axis=0)
 
@@ -74,16 +153,22 @@ def DiscreteVS(PHI, P, nbpoint=None, crit="D"):
     n = V.size[1]
     G = cv.spmatrix(-1.0, range(n), range(n))
     h = cv.matrix(0.0, (n, 1))
-    b = cv.matrix(1.0)
 
     if nbpoint is None:
         nbpoint = d
+
+    if inv_prior is None:
+        inv_prior = cv.matrix(np.zeros((d,d)))
+    else:
+        inv_prior = cv.matrix(inv_prior)
+
+    b = cv.matrix(nbpoint, tc="d")
 
     if crit == "D":
         A = cv.matrix(1.0, (1, n))
         def F(x=None, z=None):
             if x is None: return 0, cv.matrix(1.0, (n, 1))
-            X = V * cv.spdiag(x) * V.T
+            X = V * cv.spdiag(x) * V.T + inv_prior
             L = +X
             try:
                 cv.lapack.potrf(L)
@@ -134,16 +219,95 @@ def DiscreteVS(PHI, P, nbpoint=None, crit="D"):
     U = np.abs(np.array(U))
     U /= sum(U)
 
-    WeightedQ = (np.diag(U).dot(Q)).T
-    OrthoQ = orth(WeightedQ.T)
-    Ker = OrthoQ.dot(OrthoQ.T)
-    DPP = FiniteDPP(kernel_type='correlation', projection=True, K=Ker)
-    T = DPP.sample_exact()
+    return U
 
-    if nbpoint > d:
-        T += multinom_to_list(np.random.multinomial(nbpoint-d, U))
+def DiscreteVS(PHI, P, nbpoint=None, crit="D", inv_prior=None):
 
-    return Pt[T, :]
+    Pt = np.unique([tuple(row) for row in P], axis=0)
+
+    Q = PHI(Pt)
+    V = cv.matrix(Q.T)
+    d = V.size[0]
+    n = V.size[1]
+    G = cv.spmatrix(-1.0, range(n), range(n))
+    h = cv.matrix(0.0, (n, 1))
+
+    if nbpoint is None:
+        nbpoint = d
+
+    if inv_prior is None:
+        inv_prior = cv.matrix(np.zeros((d,d)))
+    else:
+        inv_prior = cv.matrix(inv_prior)
+
+    b = cv.matrix(nbpoint, tc="d")
+
+    if crit == "D":
+        A = cv.matrix(1.0, (1, n))
+        def F(x=None, z=None):
+            if x is None: return 0, cv.matrix(1.0, (n, 1))
+            X = V * cv.spdiag(x) * V.T + inv_prior
+            L = +X
+            try:
+                cv.lapack.potrf(L)
+            except ArithmeticError:
+                return None
+            f = - 2.0 * sum([math.log(L[i, i]) for i in range(d)])
+            W = +V
+            cv.blas.trsm(L, W)
+            gradf = cv.matrix(-1.0, (1, d)) * W**2
+            if z is None:
+                return f, gradf
+            H = cv.matrix(0.0, (n, n))
+            cv.blas.syrk(W, H, trans='T')
+            return f, gradf, z[0] * H**2
+        xd = cv.solvers.cp(F, G, h, A=A, b=b)['x']
+        U = np.array(xd)[:, 0]
+    elif crit == "A":
+        novars = n + int(d*(d+1)/2)
+        c = cv.matrix(0.0, (novars, 1))
+        cst = n
+        for a in range(d):
+            c[cst] = 1
+            cst += d-a
+        Ga = cv.matrix(0.0, (n, novars))
+        Ga[:, :n] = G
+        Gs = [cv.matrix(0.0, (4*d**2, novars))]
+        for k in range(n):
+            Gk = cv.matrix(0.0, (2*d, 2*d))
+            Gk[:d, :d] = -V[:, k] * V[:, k].T
+            Gs[0][:, k] = Gk[:]
+        cst = n
+        for i in range(d):
+            for j in range(i, d):
+                Gk = cv.matrix(0.0, (2*d, 2*d))
+                Gk[d+i, d+j] = -1
+                Gk[d+j, d+i] = -1
+                Gs[0][:, cst] = Gk[:]
+                cst += 1
+        hs = [cv.matrix(0.0, (2*d, 2*d))]
+        hs[0][d:, :d] = cv.spmatrix(-1.0, range(d), range(d))
+        Aa = cv.matrix(n*[1.0] + int(d*(d+1)/2)*[0.0], (1, novars))
+        try:
+            sol = cv.solvers.sdp(c, Ga, h, Gs, hs, Aa, b)
+        except:
+            return P[range(nbpoint), :]
+        U = list(sol['x'][:n])
+
+    U = np.abs(np.array(U))
+    U /= sum(U)
+
+    #WeightedQ = (np.diag(U).dot(Q)).T ###OLD MISTAKE###
+    #OrthoQ = orth(WeightedQ.T)
+    #OrthoQ = orth(np.diag(np.sqrt(U)).dot(Q)) ###CORRECT###
+    #Ker = OrthoQ.dot(OrthoQ.T)
+    #DPP = FiniteDPP(kernel_type='correlation', projection=True, K=Ker)
+    #T = DPP.sample_exact()
+
+    #if nbpoint > d:
+    #    T += multinom_to_list(np.random.multinomial(nbpoint-d, U))
+
+    return Discrete_PVS(PHI, Pt, U, nbpoint, inv_prior=inv_prior)
 
 def Finite_ExM(OD, X, crit="D", progress=False):
     n = X.shape[0]
@@ -174,7 +338,7 @@ def RegP(xlim, ylim, npoint):
     return np.asarray(Points)
 
 class OptDesign:
-    def __init__(self, PHI, lower_point, upper_point, nbpoint=None, cara=None, Urand=None, plot_fun=None, opt_1P_fun=None, A_prior=None):
+    def __init__(self, PHI, lower_point, upper_point, nbpoint=None, cara=None, Urand=None, plot_fun=None, opt_1P_fun=None, inv_prior=0):
         """Definition of the optimal design object.
 
         Parameters:
@@ -215,6 +379,20 @@ class OptDesign:
         elif nbpoint < self.nbreg:
             raise ValueError("The number of points of the design should be higher than the number of regressing functions")
         else: self.nbpoint = nbpoint
+
+        if type(inv_prior) != np.ndarray:
+            try:
+                inv_prior = np.asarray([inv_prior])
+            except:
+                raise ValueError("Type issues with the inverse of the prior covariance matrix")
+        if inv_prior.shape==(1,):
+            self.inv_prior = inv_prior*np.eye(self.nbreg)
+        elif inv_prior.shape==(self.nbreg,):
+            self.inv_prior = np.diag(inv_prior)
+        elif inv_prior.shape==(self.nbreg,self.nbreg):
+            self.inv_prior = inv_prior
+        else:
+            raise ValueError("Wrong dimensions for the inverse of the prior covariance matrix")
 
         if Urand is None and cara is None:
             def Urand(n):
@@ -257,16 +435,14 @@ class OptDesign:
 
         self.opt_1P_fun = opt_1P_fun
 
-        self.A_prior = np.zeros((self.nbreg,self.nbreg)) if A_prior is None else A_prior
-
     def opt(self, x, crit="D"):
         P = x.reshape(self.nbpoint, self.dim)
         Q = self.PHI(P)
         if not all(self.cara(P)):
             return 10000000000
         if crit == "D":
-            return -np.linalg.slogdet((Q.T).dot(Q)+self.A_prior)[1]
-        M = (Q.T).dot(Q)+self.A_prior
+            return -np.linalg.slogdet((Q.T).dot(Q) + self.inv_prior)[1]
+        M = (Q.T).dot(Q) + self.inv_prior
         d = np.linalg.det(M)
         if d == 0:
             return 10000000000
@@ -351,9 +527,15 @@ class DOGS:
         self.ini = ini
         self.nbupd = OD.nbreg if nbupd is None else nbupd
 
-    def simulate(self, nbiter, progress=False):
+    def simulate(self, nbiter, progress=False, rounding="PVS"):
 
         cv.solvers.options['show_progress'] = False
+
+        if rounding not in ["PVS", "Efficient"]:
+            raise ValueError("Wrong rounding method. It should be PVS or Efficient")
+
+        if progress:
+            print('\rProgress: 0%', end=" ")
 
         if self.ini is None:
             P = self.OD.Urand(self.OD.nbpoint)
@@ -364,7 +546,15 @@ class DOGS:
             oldval = self.OD.opt(P, crit=self.crit)
             Pupd = self.OD.Urand(self.nbupd)
             try:
-                Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint=self.OD.nbpoint, crit=self.crit)
+                Pt = np.unique([tuple(row) for row in np.vstack((P, Pupd, self.CP))], axis=0)
+                Weight = DiscreteConvexOpt(self.OD.PHI, Pt, nbpoint=self.OD.nbpoint, crit=self.crit, inv_prior=self.OD.inv_prior)
+                if rounding == "PVS":
+                    Pfin = Discrete_PVS(self.OD.PHI, Pt, Weight, self.OD.nbpoint, inv_prior=self.OD.inv_prior)
+                elif rounding == "Efficient":
+                    Rounded_Weight = efficient_rounding(Weight, self.OD.nbpoint)
+                    Index_list = np.concatenate([[k for i in range(Rounded_Weight[k])] for k in range(len(Rounded_Weight))]).astype(int)
+                    Pfin = Pt[Index_list,:]
+                #Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint=self.OD.nbpoint, crit=self.crit, inv_prior=self.OD.inv_prior)
             except:
                 Pfin = P
             newval = self.OD.opt(Pfin, crit=self.crit)
@@ -376,29 +566,37 @@ class DOGS:
             print('Done')
         return P
 
-    def simulate_extreme(self, nbiter, progress=False, Fexm_progress=False):
-        P = self.OD.Urand(self.OD.nbpoint)
+    # def simulate_extreme(self, nbiter, progress=False, Fexm_progress=False):
+    #     P = self.OD.Urand(self.OD.nbpoint)
 
-        for N in range(nbiter):
-            oldval = self.OD.opt(P, crit=self.crit)
-            Pupd = self.OD.Urand(self.nbupd)
-            X = np.unique([np.vstack((P, Pupd, self.CP)) for row in P], axis=0)[0]
-            Pfin = Finite_ExM(self.OD, X, progress=Fexm_progress, crit=self.crit)
-            newval = self.OD.opt(Pfin, crit=self.crit)
-            if newval < oldval:
-                P = np.copy(Pfin)
-            if progress:
-                print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end=" ")
-        if progress:
-            print('Done')
+    #     for N in range(nbiter):
+    #         oldval = self.OD.opt(P, crit=self.crit)
+    #         Pupd = self.OD.Urand(self.nbupd)
+    #         X = np.unique([np.vstack((P, Pupd, self.CP)) for row in P], axis=0)[0]
+    #         Pfin = Finite_ExM(self.OD, X, progress=Fexm_progress, crit=self.crit)
+    #         newval = self.OD.opt(Pfin, crit=self.crit)
+    #         if newval < oldval:
+    #             P = np.copy(Pfin)
+    #         if progress:
+    #             print('\rProgress: '+f'{100*(N+1)/nbiter:.2f}'+'%', end=" ")
+    #     if progress:
+    #         print('Done')
 
-        return P
+    #     return P
 
-    def testing(self, nbiter, nbtest=1, progress=False):
+    def testing(self, nbiter, nbtest=1, progress=False, rounding="PVS", show_time=False):
 
         cv.solvers.options['show_progress'] = False
 
-        All_result = np.zeros(nbiter+1)
+        if rounding not in ["PVS", "Efficient"]:
+            raise ValueError("Wrong rounding method. It should be PVS or Efficient")
+
+        All_result = np.zeros((nbtest, nbiter+1))
+        if show_time:
+            All_time = np.zeros((nbtest, nbiter+1))
+
+        if progress:
+            print('\rProgress: 0%', end=" ")
 
         for N in range(nbtest):
 
@@ -408,25 +606,101 @@ class DOGS:
                 P = self.ini
 
             L = [self.OD.opt(P, crit=self.crit)]
+            if show_time:
+                ini_time = time()
+                T = [0]
 
             for _ in range(nbiter):
                 oldval = self.OD.opt(P, crit=self.crit)
                 Pupd = self.OD.Urand(self.nbupd)
                 try:
-                    Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint=self.OD.nbpoint, crit=self.crit)
+                    Pt = np.unique([tuple(row) for row in np.vstack((P, Pupd, self.CP))], axis=0)
+                    Weight = DiscreteConvexOpt(self.OD.PHI, Pt, nbpoint=self.OD.nbpoint, crit=self.crit, inv_prior=self.OD.inv_prior)
+                    if rounding == "PVS":
+                        Pfin = Discrete_PVS(self.OD.PHI, Pt, Weight, self.OD.nbpoint, inv_prior=self.OD.inv_prior)
+                    elif rounding == "Efficient":
+                        Rounded_Weight = efficient_rounding(Weight, self.OD.nbpoint)
+                        Index_list = np.concatenate([[k for i in range(Rounded_Weight[k])] for k in range(len(Rounded_Weight))]).astype(int)
+                        Pfin = Pt[Index_list,:]
+                    #Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint=self.OD.nbpoint, crit=self.crit, inv_prior=self.OD.inv_prior)
                 except:
                     Pfin = P
                 newval = self.OD.opt(Pfin, crit=self.crit)
                 if newval < oldval:
                     P = np.copy(Pfin)
                 L.append(self.OD.opt(P, crit=self.crit))
+                if show_time:
+                    T.append(time()-ini_time)
 
-            All_result = np.vstack((All_result, np.asarray(L)))
+            All_result[N,:] = np.asarray(L)
+            if show_time:
+                All_time[N,:] = np.asarray(T)
+
             if progress:
                 print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end=" ")
         if progress:
             print('Done')
-        return All_result[1:, :]
+        if show_time:
+            return All_result, All_time
+        return All_result
+
+    # def animate(self, nbiter, nbframe_ini = 10, fps = 10, show_last_frame = False):
+
+    #     if self.OD.dim!= 2:
+    #         raise ValueError('Animation only available in dimension 2')
+
+    #     l = self.OD.lower_point
+    #     u = self.OD.upper_point
+    #     fig = plt.figure(figsize = (10, 10*(u[1]-l[1])/(u[0]-l[0])))
+    #     ax = fig.add_subplot(1, 1, 1)
+    #     ax = self.OD.plot_fun(ax)
+    #     line2 = ax.scatter([], [], marker = marker, s = 100, alpha = 0.2, color = "grey")
+    #     line = ax.scatter([], [], marker = marker, s = 100, color = 'r')
+    #     leg1 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/100, "", fontsize = 20)
+    #     leg2 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/10, "", fontsize = 20)
+
+    #     def init():
+    #         global P
+    #         if self.ini is None:
+    #             P = self.OD.Urand(self.OD.nbpoint)
+    #         else:
+    #             P = self.ini
+    #         cv.solvers.options['show_progress'] = False
+    #         line2.set_offsets(np.array([[], []]).T)
+    #         line.set_offsets(np.array([[], []]).T)
+    #         leg1.set_text("")
+    #         leg2.set_text("")
+    #         return line,
+
+    #     def anim_fun(Niter):
+    #         global P
+    #         Nframe = np.copy(Niter)
+    #         if Nframe<nbframe_ini:
+    #             line.set_offsets(P)
+    #             leg1.set_text("Iteration 0")
+    #             leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
+    #             return line2, line,
+
+    #         oldval = self.OD.opt(P, crit = self.crit)
+    #         Pupd = self.OD.Urand(self.nbupd)
+    #         try:
+    #             Pfin = DiscreteVS(self.OD.PHI, np.vstack((P, Pupd, self.CP)), nbpoint = self.OD.nbpoint, crit = self.crit)
+    #         except:
+    #             Pfin = P
+    #         newval = self.OD.opt(Pfin, crit = self.crit)
+    #         if newval<oldval :
+    #             P = np.copy(Pupd)
+    #         Pt, Nb = np.unique([tuple(row) for row in P], axis = 0, return_counts = True)
+    #         line.set_offsets(Pt)
+    #         line.set_sizes(100*Nb)
+    #         line2.set_offsets(Pupd)
+    #         leg1.set_text("Iteration "+str(Nframe-nbframe_ini+1))
+    #         leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
+    #         return line2, line,
+
+    #     anim = animation.FuncAnimation(fig, anim_fun, init_func = init, frames = nbiter+nbframe_ini, blit = True)
+    #     anim.save('ARIFAA_animation.mp4', fps = fps)
+    #     if not show_last_frame: plt.close()
 
 #############################Classe LSA##############################
 
@@ -460,6 +734,9 @@ class LSA:
             P = self.OD.Urand(self.OD.nbpoint)
         else: P = self.ini
 
+        if progress:
+            print('\rProgress: 0%', end=" ")
+
         for N in range(nbiter):
             oldval = self.OD.opt(P, crit=self.crit)
             Pupd = P+np.random.normal(loc=0, scale=self.sd, size=(self.OD.nbpoint, self.OD.dim))
@@ -476,9 +753,14 @@ class LSA:
             print('Done')
         return P
 
-    def testing(self, nbiter, nbtest=1, progress=False):
+    def testing(self, nbiter, nbtest=1, progress=False, show_time=False):
 
-        All_result = np.zeros(nbiter+1)
+        All_result = np.zeros((nbtest, nbiter+1))
+        if show_time:
+            All_time = np.zeros((nbtest, nbiter+1))
+
+        if progress:
+            print('\rProgress: 0%', end=" ")
 
         for N in range(nbtest):
 
@@ -488,6 +770,9 @@ class LSA:
                 P = self.ini
 
             L = [self.OD.opt(P, crit=self.crit)]
+            if show_time:
+                ini_time = time()
+                T = [0]
 
             for _ in range(nbiter):
                 oldval = self.OD.opt(P, crit=self.crit)
@@ -499,12 +784,79 @@ class LSA:
                 newval = self.OD.opt(Pupd, crit=self.crit)
                 if newval < oldval:
                     P = np.copy(Pupd)
-                L = L+[self.OD.opt(P, crit=self.crit)]
+                L.append(self.OD.opt(P, crit=self.crit))
+                if show_time:
+                    T.append(time()-ini_time)
 
-            All_result = np.vstack((All_result, np.asarray(L)))
-            if progress: print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end=" ")
-        if progress: print('Done')
-        return All_result[1:, :]
+            All_result[N,:] = np.asarray(L)
+            if show_time:
+                All_time[N,:] = np.asarray(T)
+
+            if progress:
+                print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end=" ")
+        if progress:
+            print('Done')
+        if show_time:
+            return All_result, All_time
+        return All_result
+
+    # def animate(self, nbiter, nbframe_ini = 20, fps = 10, show_last_frame = False):
+
+    #     if self.OD.dim!= 2:
+    #         raise ValueError('Animation only available in dimension 2')
+
+    #     l = self.OD.lower_point
+    #     u = self.OD.upper_point
+    #     fig = plt.figure(figsize = (10, 10*(u[1]-l[1])/(u[0]-l[0])))
+    #     ax = fig.add_subplot(1, 1, 1)
+    #     ax = self.OD.plot_fun(ax)
+    #     line2 = ax.scatter([], [], marker = marker, s = 100, alpha = 0.2, color = "grey")
+    #     line = ax.scatter([], [], marker = marker, s = 100, color = 'r')
+    #     leg1 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/50, "", fontsize = 20)
+    #     leg2 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/10, "", fontsize = 20)
+
+    #     def init():
+    #         global P
+    #         if self.ini is None:
+    #             P = self.OD.Urand(self.OD.nbpoint)
+    #         else:
+    #             P = self.ini
+    #         line2.set_offsets(np.array([[], []]).T)
+    #         line.set_offsets(np.array([[], []]).T)
+    #         leg1.set_text("")
+    #         leg2.set_text("")
+    #         return line,
+
+    #     def anim_fun(Niter):
+    #         global P
+    #         Nframe = np.copy(Niter)
+    #         if Nframe<nbframe_ini:
+    #             line.set_offsets(P)
+    #             line2.set_offsets(np.array([[], []]).T)
+    #             leg1.set_text("Iteration 0")
+    #             leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
+    #             return line2, line,
+
+    #         oldval = self.OD.opt(P, crit = self.crit)
+    #         Pupd = P+np.random.normal(loc = 0, scale = self.sd, size = (self.OD.nbpoint, self.OD.dim))
+    #         CARA = self.OD.cara(Pupd)
+    #         for i in range(self.OD.nbpoint):
+    #             if not CARA[i]:
+    #                 Pupd[i, :] = np.copy(P[i, :])
+    #         newval = self.OD.opt(Pupd, crit = self.crit)
+    #         if newval<oldval :
+    #             P = np.copy(Pupd)
+    #         Pt, Nb = np.unique([tuple(row) for row in P], axis = 0, return_counts = True)
+    #         line.set_offsets(Pt)
+    #         line.set_sizes(100*Nb)
+    #         line2.set_offsets(Pupd)
+    #         leg1.set_text("Iteration "+str(Nframe-nbframe_ini+1))
+    #         leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
+    #         return line2, line,
+
+    #     anim = animation.FuncAnimation(fig, anim_fun, init_func = init, frames = nbiter+nbframe_ini, blit = True)
+    #     anim.save('LSA_animation.mp4', fps = fps)
+    #     if not show_last_frame: plt.close()
 
 #############################Classe ExM##############################
 
@@ -536,6 +888,9 @@ class ExM:
             P = self.OD.Urand(self.OD.nbpoint)
         else: P = self.ini
 
+        if progress:
+            print('\rProgress: 0%', end=" ")
+
         for N in range(nbiter):
             x0 = P[0, :]
             Q = np.delete(P, 0, 0)
@@ -545,9 +900,14 @@ class ExM:
         if progress: print('Done')
         return P
 
-    def testing(self, nbiter, nbtest=1, progress=False):
+    def testing(self, nbiter, nbtest=1, progress=False, show_time=False):
 
-        All_result = np.zeros(nbiter+1)
+        All_result = np.zeros((nbtest, nbiter+1))
+        if show_time:
+            All_time = np.zeros((nbtest, nbiter+1))
+
+        if progress:
+            print('\rProgress: 0%', end=" ")
 
         for N in range(nbtest):
 
@@ -557,20 +917,83 @@ class ExM:
                 P = self.ini
 
             L = [self.OD.opt(P, crit=self.crit)]
+            if show_time:
+                ini_time = time()
+                T = [0]
 
             for _ in range(nbiter):
                 x0 = P[0, :]
                 Q = np.delete(P, 0, 0)
                 x = self.OD.P_opt(Q, x0, self.crit)
                 P = np.vstack((Q, x))
-                L = L+[self.OD.opt(P, crit=self.crit)]
+                L.append(self.OD.opt(P, crit=self.crit))
+                if show_time:
+                    T.append(time()-ini_time)
 
-            All_result = np.vstack((All_result, np.asarray(L)))
+            All_result[N,:] = np.asarray(L)
+            if show_time:
+                All_time[N,:] = np.asarray(T)
+
             if progress:
                 print('\rProgress: '+f'{100*(N+1)/nbtest:.2f}'+'%', end=" ")
         if progress:
             print('Done')
-        return All_result[1:, :]
+        if show_time:
+            return All_result, All_time
+        return All_result
+
+    # def animate(self, nbiter, nbframe_ini = 20, fps = 10, show_last_frame = False):
+
+    #     if self.OD.dim!= 2:
+    #         raise ValueError('Animation only available in dimension 2')
+
+    #     l = self.OD.lower_point
+    #     u = self.OD.upper_point
+    #     fig = plt.figure(figsize = (10, 10*(u[1]-l[1])/(u[0]-l[0])))
+    #     ax = fig.add_subplot(1, 1, 1)
+    #     ax = self.OD.plot_fun(ax)
+    #     line2 = ax.scatter([], [], marker = marker, s = 100, alpha = 0.2, color = "grey")
+    #     line = ax.scatter([], [], marker = marker, s = 100, color = 'r')
+    #     leg1 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/100, "", fontsize = 20)
+    #     leg2 = ax.text(self.OD.lower_point[0], self.OD.upper_point[1]+(self.OD.upper_point[1]-self.OD.lower_point[1])/10, "", fontsize = 20)
+
+    #     def init():
+    #         global P
+    #         if self.ini is None:
+    #             P = self.OD.Urand(self.OD.nbpoint)
+    #         else:
+    #             P = self.ini
+    #         line2.set_offsets(np.array([[], []]).T)
+    #         line.set_offsets(np.array([[], []]).T)
+    #         leg1.set_text("")
+    #         leg2.set_text("")
+    #         return line,
+
+    #     def anim_fun(Niter):
+    #         global P
+    #         Nframe = np.copy(Niter)
+    #         if Nframe<nbframe_ini:
+    #             line.set_offsets(P)
+    #             line2.set_offsets(np.array([[], []]).T)
+    #             leg1.set_text("Iteration 0")
+    #             leg2.set_text("log(h_D(X)) = "+ "%.3f" % self.OD.opt(P, crit = self.crit))
+    #             return line2, line,
+
+    #         x0 = P[0, :]
+    #         Q = np.delete(P, 0, 0)
+    #         x = self.OD.P_opt(Q, x0, self.crit)
+    #         P = np.vstack((Q, x))
+    #         Pt, Nb = np.unique([tuple(row) for row in P], axis = 0, return_counts = True)
+    #         line.set_offsets(Pt)
+    #         line.set_sizes(100*Nb)
+    #         line2.set_offsets(np.array([[], []]).T)
+    #         leg1.set_text("Iteration "+str(Nframe-nbframe_ini+1))
+    #         leg2.set_text("log(H_D(X)) = "+ "%.3f" % self.OD.opt(P, crit=self.crit))
+    #         return line2, line,
+
+    #     anim = animation.FuncAnimation(fig, anim_fun, init_func=init, frames=nbiter+nbframe_ini, blit=True)
+    #     anim.save('ExM_animation.mp4', fps=fps)
+    #     if not show_last_frame: plt.close()
 
 #############################Classe DisSpace##############################
 class Discrete_ExM:
